@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from argparse import ArgumentParser
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 import gzip
