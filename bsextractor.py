@@ -342,8 +342,14 @@ def methylExtractor(params: Parameters) -> None:
 
     outfile_atcg = myOpenFile(params.out_atcg)
     outfile_cg = myOpenFile(params.out_cg)
-
     outfile_bed = myOpenFile(params.out_bed)
+
+    if outfile_cg:
+        outfile_cg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tbeta\tm_count\tdepth\n')
+    if outfile_bed:
+        outfile_bed.write('chr\tstart\tend\tbeta\n')
+    if outfile_atcg:
+        outfile_atcg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tm_count\tdepth\tbeta\n')
 
     intervals = list(
         GenomicIntervalGenerator(
@@ -376,7 +382,7 @@ def methylExtractor(params: Parameters) -> None:
                     outfile_cg.write(
                         f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
                 if outfile_bed and depth > 0 and gc_context == 'CG':
-                    outfile_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
+                    outfile_bed.write(f'{chr}\t{pos}\t{pos + 2}\t{beta * 100}\n')
                 if outfile_atcg:
                     outfile_atcg.write(
                         f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{m_count}\t{depth}\t{beta}\n')
