@@ -1,5 +1,6 @@
-# -*- coding: utf-8 -*-
+#!/usr/bin/env python
 from argparse import ArgumentParser
+import array
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 import gzip
 import io
@@ -8,7 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import re
 import sys
-from typing import Generator, List, NamedTuple, Optional, Tuple
+from typing import Callable, Dict, Generator, Iterable, Iterator, List, NamedTuple, Optional, Sequence, Tuple, Union
 import pysam  # ver 0.22.0
 
 
@@ -129,6 +130,62 @@ class GenomicIntervalGenerator:
 
 
 class MyFastaFile(pysam.FastaFile):
+    def __init__(self, filename: str):
+        self._fasta = pysam.FastaFile(filename)
+
+    @property
+    def closed(self) -> bool:
+        return self._fasta.closed
+
+    @property
+    def filename(self) -> str:
+        return self._fasta.filename
+
+    @property
+    def references(self) -> Sequence[str]:
+        return self._fasta.references
+
+    @property
+    def nreferences(self) -> Optional[int]:
+        return self._fasta.nreferences
+
+    @property
+    def lengths(self) -> Sequence[int]:
+        return self._fasta.lengths
+
+    # Delegate methods
+    def is_open(self) -> bool:
+        return self._fasta.is_open()
+
+    def close(self) -> None:
+        self._fasta.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def fetch(
+        self,
+        reference: Optional[str] = None,
+        start: Optional[int] = None,
+        end: Optional[int] = None,
+        region: Optional[str] = None,
+    ) -> str:
+        return self._fasta.fetch(reference=reference, start=start, end=end, region=region)
+
+    def get_reference_length(self, reference: str) -> int:
+        return self._fasta.get_reference_length(reference)
+
+    def __getitem__(self, reference: str) -> str:
+        return self._fasta[reference]
+
+    def __contains__(self, reference: str) -> bool:
+        return reference in self._fasta
+
+    def __len__(self) -> int:
+        return len(self._fasta)
 
     def rich_fetch(self, interval: GenomicInterval, padding: int) -> str:
         bases: str
@@ -201,9 +258,252 @@ def check_read(forward_read: bool, read_quality: int):
     return valid_read
 
 
-class MyAlignmentFile(pysam.AlignmentFile):
+class MyAlignmentFile:
+    def __init__(
+        self,
+        filename: str,
+        mode: Optional[str] = "rb",
+        template: Optional[pysam.AlignmentFile] = None,
+        reference_names: Optional[Sequence[str]] = None,
+        reference_lengths: Optional[Sequence[int]] = None,
+        reference_filename: Optional[str] = None,
+        text: Optional[str] = None,
+        header: Optional[Union[Dict, pysam.AlignmentHeader]] = None,
+        add_sq_text: bool = False,
+        add_sam_header: bool = False,
+        check_sq: bool = True,
+        index_filename: Optional[str] = None,
+        filepath_index: Optional[str] = None,
+        require_index: bool = False,
+        duplicate_filehandle: bool = False,
+        ignore_truncation: bool = False,
+        format_options: Optional[Sequence[str]] = None,
+        threads: int = 1,
+    ):
+        """
+        Initialize the wrapper class with a pysam.AlignmentFile object.
+        """
+        self._alignment = pysam.AlignmentFile(
+            filename=filename,
+            mode=mode,
+            template=template,
+            reference_names=reference_names,
+            reference_lengths=reference_lengths,
+            reference_filename=reference_filename,
+            text=text,
+            header=header,
+            add_sq_text=add_sq_text,
+            add_sam_header=add_sam_header,
+            check_sq=check_sq,
+            index_filename=index_filename,
+            filepath_index=filepath_index,
+            require_index=require_index,
+            duplicate_filehandle=duplicate_filehandle,
+            ignore_truncation=ignore_truncation,
+            format_options=format_options,
+            threads=threads,
+        )
 
-    # def __init__(self, )
+    # Delegate properties
+    @property
+    def mapped(self) -> int:
+        return self._alignment.mapped
+
+    @property
+    def unmapped(self) -> int:
+        return self._alignment.unmapped
+
+    @property
+    def nocoordinate(self) -> int:
+        return self._alignment.nocoordinate
+
+    @property
+    def nreferences(self) -> int:
+        return self._alignment.nreferences
+
+    @property
+    def references(self) -> Tuple[str, ...]:
+        return self._alignment.references
+
+    @property
+    def lengths(self) -> Tuple[int, ...]:
+        return self._alignment.lengths
+
+    @property
+    def reference_filename(self) -> Optional[str]:
+        return self._alignment.reference_filename
+
+    @property
+    def header(self) -> pysam.AlignmentHeader:
+        return self._alignment.header
+
+    # Delegate methods
+    def has_index(self) -> bool:
+        return self._alignment.has_index()
+
+    def check_index(self) -> bool:
+        return self._alignment.check_index()
+
+    def fetch(
+        self,
+        contig: Optional[str] = None,
+        start: Optional[int] = None,
+        stop: Optional[int] = None,
+        region: Optional[str] = None,
+        tid: Optional[int] = None,
+        until_eof: bool = False,
+        multiple_iterators: bool = False,
+        reference: Optional[str] = None,
+        end: Optional[int] = None,
+    ) -> Iterator:
+        return self._alignment.fetch(
+            contig=contig,
+            start=start,
+            stop=stop,
+            region=region,
+            tid=tid,
+            until_eof=until_eof,
+            multiple_iterators=multiple_iterators,
+            reference=reference,
+            end=end,
+        )
+
+    def head(self, n: int, multiple_iterators: bool = False) -> Iterator:
+        return self._alignment.head(n=n, multiple_iterators=multiple_iterators)
+
+    def mate(self, read: pysam.AlignedSegment) -> pysam.AlignedSegment:
+        return self._alignment.mate(read)
+
+    def pileup(
+        self,
+        contig: Optional[str] = None,
+        start: Optional[int] = None,
+        stop: Optional[int] = None,
+        region: Optional[str] = None,
+        reference: Optional[str] = None,
+        end: Optional[int] = None,
+        truncate: bool = False,
+        max_depth: int = 8000,
+        stepper: str = "all",
+        fastafile: Optional[pysam.FastaFile] = None,
+        ignore_overlaps: bool = True,
+        flag_filter: int = 1536,
+        flag_require: int = 0,
+        ignore_orphans: bool = True,
+        min_base_quality: int = 13,
+        adjust_capq_threshold: int = 50,
+        min_mapping_quality: int = 0,
+        compute_baq: bool = False,
+        redo_baq: bool = False,
+    ) -> Iterator:
+        return self._alignment.pileup(
+            contig=contig,
+            start=start,
+            stop=stop,
+            region=region,
+            reference=reference,
+            end=end,
+            truncate=truncate,
+            max_depth=max_depth,
+            stepper=stepper,
+            fastafile=fastafile,
+            ignore_overlaps=ignore_overlaps,
+            flag_filter=flag_filter,
+            flag_require=flag_require,
+            ignore_orphans=ignore_orphans,
+            min_base_quality=min_base_quality,
+            adjust_capq_threshold=adjust_capq_threshold,
+            min_mapping_quality=min_mapping_quality,
+            compute_baq=compute_baq,
+            redo_baq=redo_baq,
+        )
+
+    def count(
+        self,
+        contig: Optional[str] = None,
+        start: Optional[int] = None,
+        stop: Optional[int] = None,
+        region: Optional[str] = None,
+        until_eof: bool = False,
+        read_callback: Union[str, Callable[[pysam.AlignedSegment], bool]] = "all",
+        reference: Optional[str] = None,
+        end: Optional[int] = None,
+    ) -> int:
+        return self._alignment.count(
+            contig=contig,
+            start=start,
+            stop=stop,
+            region=region,
+            until_eof=until_eof,
+            read_callback=read_callback,
+            reference=reference,
+            end=end,
+        )
+
+    def count_coverage(
+        self,
+        contig: Optional[str] = None,
+        start: Optional[int] = None,
+        stop: Optional[int] = None,
+        region: Optional[str] = None,
+        quality_threshold: int = 15,
+        read_callback: Union[str, Callable[[pysam.AlignedSegment], bool]] = "all",
+        reference: Optional[str] = None,
+        end: Optional[int] = None,
+    ) -> Tuple[array.array, array.array, array.array, array.array]:
+        return self._alignment.count_coverage(
+            contig=contig,
+            start=start,
+            stop=stop,
+            region=region,
+            quality_threshold=quality_threshold,
+            read_callback=read_callback,
+            reference=reference,
+            end=end,
+        )
+
+    def find_introns_slow(
+        self, read_iterator: Iterable[pysam.AlignedSegment]
+    ) -> Dict[Tuple[int, int], int]:
+        return self._alignment.find_introns_slow(read_iterator)
+
+    def find_introns(
+        self, read_iterator: Iterable[pysam.AlignedSegment]
+    ) -> Dict[Tuple[int, int], int]:
+        return self._alignment.find_introns(read_iterator)
+
+    def close(self) -> None:
+        self._alignment.close()
+
+    def write(self, read: pysam.AlignedSegment) -> int:
+        return self._alignment.write(read)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
+
+    def __iter__(self) -> Iterator:
+        return iter(self._alignment)
+
+    def __next__(self) -> pysam.AlignedSegment:
+        return next(self._alignment)
+
+    def is_valid_tid(self, tid: int) -> bool:
+        return self._alignment.is_valid_tid(tid)
+
+    def get_tid(self, reference: str) -> int:
+        return self._alignment.get_tid(reference)
+
+    def get_reference_name(self, tid: int) -> str:
+        return self._alignment.get_reference_name(tid)
+
+    def get_reference_length(self, reference: str) -> int:
+        return self._alignment.get_reference_length(reference)
+
+    def get_index_statistics(self) -> List:
+        return self._alignment.get_index_statistics()
 
     def Watson_Crick_coverage(
         self, interval: GenomicInterval, params: Parameters
@@ -250,144 +550,140 @@ def myOpenFile(file: str):
 
 
 def process_interval(interval: GenomicInterval,
-                     fa: MyFastaFile,
-                     bam: MyAlignmentFile,
+                     fa_file: str,
+                     bam_file: str,
                      params: Parameters) -> Optional[List[Tuple[str, str, int,
                                                                 str, str, float,
                                                                 int, int, int,
                                                                 int, int, int,
                                                                 int, int, int,
                                                                 int]]]:
-    # context size
-    con_size = params.context_size
-    # ref sequences
-    bases = fa.rich_fetch(interval, padding=con_size - 1).upper()
-    # bam coverages
-    try:
-        coverage = bam.Watson_Crick_coverage(interval, params)
-        cov_sum_W = np.sum(coverage.watson, axis=0)
-        cov_sum_C = np.sum(coverage.crick, axis=0)
-    except KeyError:
-        return None
+    with MyFastaFile(fa_file) as fa, MyAlignmentFile(bam_file, 'rb') as bam:
+        # context size
+        con_size = params.context_size
+        # ref sequences
+        bases = fa.rich_fetch(interval, padding=con_size - 1).upper()
+        # bam coverages
+        try:
+            coverage = bam.Watson_Crick_coverage(interval, params)
+            cov_sum_W = np.sum(coverage.watson, axis=0)
+            cov_sum_C = np.sum(coverage.crick, axis=0)
+        except KeyError:
+            return None
 
-    results = []
-    # (chr,
-    #  base,
-    #  start,
-    #  gc_context,
-    #  dinucleotide,
-    #  beta,
-    #  depth,
-    #  m_count,
-    #  A_waston,
-    #  T_watson,
-    #  C_watson,
-    #  G_watson,
-    #  A_crick,
-    #  T_crick,
-    #  C_crick,
-    #  G_crick)
+        results = []
+        # (chr,
+        #  base,
+        #  start,
+        #  gc_context,
+        #  dinucleotide,
+        #  beta,
+        #  depth,
+        #  m_count,
+        #  A_waston,
+        #  T_watson,
+        #  C_watson,
+        #  G_watson,
+        #  A_crick,
+        #  T_crick,
+        #  C_crick,
+        #  G_crick)
 
-    for i in range(interval.end - interval.start):
-        if cov_sum_W[i] + cov_sum_C[i] == 0:
-            continue
+        for i in range(interval.end - interval.start):
+            if cov_sum_W[i] + cov_sum_C[i] == 0:
+                continue
 
-        j = i + 2
-        base = bases[j]
-        if base == 'C':
-            nCT = coverage.watson[1, i] + coverage.watson[3, i]
-            if nCT > 0:
-                # CG/CHG/CHH
-                bases_con = bases[j: (j + con_size)]
-                results.append((interval.chr,
-                                base,
-                                interval.start + i + params.coordinate_base,
-                                '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con],
-                                bases[j: (j + 2)],
-                                coverage.watson[1, i] / nCT,
-                                coverage.watson[1, i],
-                                nCT,
-                                coverage.watson[0, i], coverage.watson[3, i],
-                                coverage.watson[1, i], coverage.watson[2, i],
-                                coverage.crick[0, i], coverage.crick[3, i],
-                                coverage.crick[1, i], coverage.crick[2, i]))
+            j = i + 2
+            base = bases[j]
+            if base == 'C':
+                nCT = coverage.watson[1, i] + coverage.watson[3, i]
+                if nCT > 0:
+                    # CG/CHG/CHH
+                    bases_con = bases[j: (j + con_size)]
+                    results.append((interval.chr,
+                                    base,
+                                    interval.start + i + params.coordinate_base,
+                                    '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con],
+                                    bases[j: (j + 2)],
+                                    coverage.watson[1, i] / nCT,
+                                    coverage.watson[1, i],
+                                    nCT,
+                                    coverage.watson[0, i], coverage.watson[3, i],
+                                    coverage.watson[1, i], coverage.watson[2, i],
+                                    coverage.crick[0, i], coverage.crick[3, i],
+                                    coverage.crick[1, i], coverage.crick[2, i]))
 
-        elif base == 'G':
-            nGA = coverage.crick[2, i] + coverage.crick[0, i]
-            if nGA > 0:
-                bases_con = bases[(j - con_size + 1): (j + 1)]
-                CG_context = ('--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con])
-                bases2 = bases[(j - 1): (j + 1)]
-                results.append((interval.chr,
-                                base,
-                                interval.start + i + params.coordinate_base,
-                                CG_context,
-                                '--' if 'N' in bases2 else DI_CONTEXT_REVERSE_HASH[bases2],
-                                coverage.crick[2, i] / nGA,
-                                coverage.crick[2, i],
-                                nGA,
-                                coverage.watson[0, i], coverage.watson[3, i],
-                                coverage.watson[1, i], coverage.watson[2, i],
-                                coverage.crick[0, i], coverage.crick[3, i],
-                                coverage.crick[1, i], coverage.crick[2, i]))
-        else:
-            pass
+            elif base == 'G':
+                nGA = coverage.crick[2, i] + coverage.crick[0, i]
+                if nGA > 0:
+                    bases_con = bases[(j - con_size + 1): (j + 1)]
+                    CG_context = ('--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con])
+                    bases2 = bases[(j - 1): (j + 1)]
+                    results.append((interval.chr,
+                                    base,
+                                    interval.start + i + params.coordinate_base,
+                                    CG_context,
+                                    '--' if 'N' in bases2 else DI_CONTEXT_REVERSE_HASH[bases2],
+                                    coverage.crick[2, i] / nGA,
+                                    coverage.crick[2, i],
+                                    nGA,
+                                    coverage.watson[0, i], coverage.watson[3, i],
+                                    coverage.watson[1, i], coverage.watson[2, i],
+                                    coverage.crick[0, i], coverage.crick[3, i],
+                                    coverage.crick[1, i], coverage.crick[2, i]))
+            else:
+                pass
 
-    return results
+        return results
 
 
 def methylExtractor(params: Parameters) -> None:
-    fa = MyFastaFile(params.fa_file)
-    bam = MyAlignmentFile(params.bam_file, 'rb')
-
     outfile_atcg = myOpenFile(params.out_atcg)
     outfile_cg = myOpenFile(params.out_cg)
-    outfile_bed = myOpenFile(params.out_bed)
 
-    if outfile_cg:
-        outfile_cg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tbeta\tm_count\tdepth\n')
-    if outfile_bed:
-        outfile_bed.write('chr\tstart\tend\tbeta\n')
-    if outfile_atcg:
-        outfile_atcg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tm_count\tdepth\tbeta\n')
+    outfile_bed = myOpenFile(params.out_bed)
 
     intervals = list(
         GenomicIntervalGenerator(
-            fa, chrs=params.chr, start=params.start, end=params.end, step=params.step
+            MyFastaFile(params.fa_file),
+            chrs=params.chr,
+            start=params.start,
+            end=params.end,
+            step=params.step
         )
     )
 
     with ProcessPoolExecutor(max_workers=params.threads) as executor:
         futures: List[Future] = [executor.submit(process_interval,
                                                  interval,
-                                                 fa, bam,
+                                                 params.fa_file,
+                                                 params.bam_file,
                                                  params)
                                  for interval in intervals]
         for future in as_completed(futures):
-            results: List[Tuple[str, str, int,
-                                str, str, float,
-                                int, int, int,
-                                int, int, int,
-                                int, int, int,
-                                int]] = [i for i in future.result() if i]
-            for result in [i for i in results if i]:
-                (chr, base, pos,
-                 gc_context, dinucleotide,
-                 beta, depth, m_count,
-                 A_waston, T_watson,
-                 C_watson, G_watson,
-                 A_crick, T_crick,
-                 C_crick, G_crick) = result
-                if outfile_cg and depth > 0:
-                    outfile_cg.write(
-                        f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
-                if outfile_bed and depth > 0 and gc_context == 'CG':
-                    outfile_bed.write(f'{chr}\t{pos}\t{pos + 2}\t{beta * 100}\n')
-                if outfile_atcg:
-                    outfile_atcg.write(
-                        f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{m_count}\t{depth}\t{beta}\n')
-    fa.close()
-    bam.close()
+            if future.result():
+                results: List[Tuple[str, str, int,
+                                    str, str, float,
+                                    int, int, int,
+                                    int, int, int,
+                                    int, int, int,
+                                    int]] = [i for i in future.result() if i]
+                for result in [i for i in results if i]:
+                    (chr, base, pos,
+                     gc_context, dinucleotide,
+                     beta, depth, m_count,
+                     A_waston, T_watson,
+                     C_watson, G_watson,
+                     A_crick, T_crick,
+                     C_crick, G_crick) = result
+                    if outfile_cg and depth > 0:
+                        outfile_cg.write(
+                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
+                    if outfile_bed and depth > 0 and gc_context == 'CG':
+                        outfile_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
+                    if outfile_atcg:
+                        outfile_atcg.write(
+                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{m_count}\t{depth}\t{beta}\n')
     if (outfile_atcg is not None) and (outfile_atcg != '-'):
         outfile_atcg.close()
     if (outfile_cg is not None) and (outfile_cg != '-'):
