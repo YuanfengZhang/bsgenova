@@ -1,5 +1,9 @@
 # bsgenova
 
+> [!IMPORTANT]
+> This is a customized version of bs-genova with parallelization features.
+> The original bs-genova can be found [here](https://github.com/hippo-yf/bsgenova)
+
  = *bs-geno-nova* = *bs-genova*
 
 An **accurate**, **robust**, and **fast** genotype caller for **bisulfite-converted** sequencing data for both single-cell and bulk samples, such (sc)WGBS, (sc)RRBS.
@@ -37,15 +41,15 @@ You can use `pip` or `conda` or else to install `numpy` and `pysam`, or use `uv`
 
 ### For autosomes
 
-![img](pic/fig2-ROC-chr-auto.svg)
+![img](https://raw.githubusercontent.com/hippo-yf/bsgenova/refs/heads/main/pic/fig2-ROC-chr-auto.svg)
 
 ### For chromosome X
 
-![img](pic/fig3-ROC-chr-X.svg)
+![img](https://raw.githubusercontent.com/hippo-yf/bsgenova/refs/heads/main/pic/fig3-ROC-chr-X.svg)
 
 ## Resource usage
 
-<img src=pic/fig-resource-usage.svg width=60%>
+<img src=https://raw.githubusercontent.com/hippo-yf/bsgenova/refs/heads/main/pic/fig-resource-usage.svg width=60%>
 
 ## Parameters
 
