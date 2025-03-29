@@ -640,8 +640,14 @@ def process_interval(interval: GenomicInterval,
 def methylExtractor(params: Parameters) -> None:
     outfile_atcg = myOpenFile(params.out_atcg)
     outfile_cg = myOpenFile(params.out_cg)
-
     outfile_bed = myOpenFile(params.out_bed)
+
+    outfile_cg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tbeta\tm_count\tdepth\n')
+    outfile_bed.write('chr\tstart\tend\tbeta\n')
+    outfile_atcg.write('chr\tbase\tpos\tgc_context\tdinucleotide\t'
+                       'beta\tm_count\tdepth\t'
+                       'A_watson\tA_crick\tT_watson\tT_crick\t'
+                       'C_watson\tC_crick\tG_watson\tG_crick\n')
 
     intervals = list(
         GenomicIntervalGenerator(
@@ -672,7 +678,7 @@ def methylExtractor(params: Parameters) -> None:
                     (chr, base, pos,
                      gc_context, dinucleotide,
                      beta, depth, m_count,
-                     A_waston, T_watson,
+                     A_watson, T_watson,
                      C_watson, G_watson,
                      A_crick, T_crick,
                      C_crick, G_crick) = result
@@ -683,7 +689,11 @@ def methylExtractor(params: Parameters) -> None:
                         outfile_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
                     if outfile_atcg:
                         outfile_atcg.write(
-                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{m_count}\t{depth}\t{beta}\n')
+                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t'
+                            f'{beta}\t{m_count}\t{depth}\t'
+                            f'{A_watson}\t{A_crick}\t{T_watson}\t{T_crick}\t'
+                            f'{C_watson}\t{C_crick}\t{G_watson}\t{G_crick}\n')
+
     if (outfile_atcg is not None) and (outfile_atcg != '-'):
         outfile_atcg.close()
     if (outfile_cg is not None) and (outfile_cg != '-'):
