@@ -14,6 +14,7 @@ import shutil
 import tempfile
 from typing import NamedTuple
 import pysam  # ver 0.22.0
+from tqdm import tqdm
 
 
 # 3-nucleotide context, CG/CHG/CHH etc.
@@ -666,9 +667,15 @@ def methylextractor(params: Parameters) -> None:
                             params.fa_file, params.bam_file, params)
             for interval in intervals]
 
-        tmp_path_lists: list[dict[str, str]] = [future.result() for future in as_completed(futures)]
+        tmp_path_lists: list[dict[str, str]] = []
+        for future in tqdm(as_completed(futures),
+                           total=len(futures),
+                           desc='Processing intervals'):
+            tmp_path_lists.append(future.result())
 
-    for tmp_files in tmp_path_lists:
+    for tmp_files in tqdm(tmp_path_lists,
+                          total=len(tmp_path_lists),
+                          desc='Merging tmp files'):
         with open(tmp_files['atcg'], 'r') as f:
             shutil.copyfileobj(f, outfile_atcg)
         with open(tmp_files['cg'], 'r') as f:
