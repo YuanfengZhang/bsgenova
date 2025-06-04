@@ -1,15 +1,18 @@
-#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from argparse import ArgumentParser
 import array
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 import gzip
 import io
 import math
 import numpy as np
 import numpy.typing as npt
+from pathlib import Path
 import re
-import sys
-from typing import Callable, Dict, Generator, Iterable, Iterator, List, NamedTuple, Optional, Sequence, Tuple, Union
+import shutil
+import tempfile
+from typing import NamedTuple
 import pysam  # ver 0.22.0
 
 
@@ -88,7 +91,7 @@ class GenomicIntervalGenerator:
     def __init__(
         self,
         fa: pysam.FastaFile,
-        chrs,
+        chrs: str,
         start: int,
         end: int,
         step: int,
@@ -130,8 +133,8 @@ class GenomicIntervalGenerator:
 
 
 class MyFastaFile(pysam.FastaFile):
-    def __init__(self, filename: str):
-        self._fasta = pysam.FastaFile(filename)
+    def __init__(self, filename: Path):
+        self._fasta = pysam.FastaFile(filename.as_posix())
 
     @property
     def closed(self) -> bool:
@@ -146,7 +149,7 @@ class MyFastaFile(pysam.FastaFile):
         return self._fasta.references
 
     @property
-    def nreferences(self) -> Optional[int]:
+    def nreferences(self) -> int | None:
         return self._fasta.nreferences
 
     @property
@@ -168,10 +171,10 @@ class MyFastaFile(pysam.FastaFile):
 
     def fetch(
         self,
-        reference: Optional[str] = None,
-        start: Optional[int] = None,
-        end: Optional[int] = None,
-        region: Optional[str] = None,
+        reference: str | None = None,
+        start: int | None = None,
+        end: int | None = None,
+        region: str | None = None,
     ) -> str:
         return self._fasta.fetch(reference=reference, start=start, end=end, region=region)
 
@@ -208,16 +211,17 @@ class MyFastaFile(pysam.FastaFile):
 
 
 class Coverage(NamedTuple):
-    watson: npt.NDArray
-    crick: npt.NDArray
+    watson: npt.NDArray[np.int64]
+    crick: npt.NDArray[np.int64]
 
 
 class Parameters(NamedTuple):
-    fa_file: str
-    bam_file: str
-    out_atcg: str
-    out_cg: str
-    out_bed: str
+    fa_file: Path
+    bam_file: Path
+    out_atcg: Path
+    out_cg: Path
+    out_bed: Path
+    tmp_dir: Path
     chr: str
     start: int
     end: int
@@ -261,35 +265,35 @@ def check_read(forward_read: bool, read_quality: int):
 class MyAlignmentFile:
     def __init__(
         self,
-        filename: str,
-        mode: Optional[str] = "rb",
-        template: Optional[pysam.AlignmentFile] = None,
-        reference_names: Optional[Sequence[str]] = None,
-        reference_lengths: Optional[Sequence[int]] = None,
-        reference_filename: Optional[str] = None,
-        text: Optional[str] = None,
-        header: Optional[Union[Dict, pysam.AlignmentHeader]] = None,
+        filename: Path,
+        mode: str | None = "rb",
+        template: pysam.AlignmentFile | None = None,
+        reference_names: Sequence[str] | None = None,
+        reference_lengths: Sequence[int] | None = None,
+        reference_filename: Path | None = None,
+        text: str | None = None,
+        header: dict | pysam.AlignmentHeader | None = None,
         add_sq_text: bool = False,
         add_sam_header: bool = False,
         check_sq: bool = True,
-        index_filename: Optional[str] = None,
-        filepath_index: Optional[str] = None,
+        index_filename: str | None = None,
+        filepath_index: str | None = None,
         require_index: bool = False,
         duplicate_filehandle: bool = False,
         ignore_truncation: bool = False,
-        format_options: Optional[Sequence[str]] = None,
+        format_options: Sequence[str] | None = None,
         threads: int = 1,
     ):
         """
         Initialize the wrapper class with a pysam.AlignmentFile object.
         """
         self._alignment = pysam.AlignmentFile(
-            filename=filename,
+            filename=filename.as_posix(),
             mode=mode,
             template=template,
             reference_names=reference_names,
             reference_lengths=reference_lengths,
-            reference_filename=reference_filename,
+            reference_filename=reference_filename.as_posix(),
             text=text,
             header=header,
             add_sq_text=add_sq_text,
@@ -322,15 +326,15 @@ class MyAlignmentFile:
         return self._alignment.nreferences
 
     @property
-    def references(self) -> Tuple[str, ...]:
+    def references(self) -> tuple[str, ...]:
         return self._alignment.references
 
     @property
-    def lengths(self) -> Tuple[int, ...]:
+    def lengths(self) -> tuple[int, ...]:
         return self._alignment.lengths
 
     @property
-    def reference_filename(self) -> Optional[str]:
+    def reference_filename(self) -> str | None:
         return self._alignment.reference_filename
 
     @property
@@ -346,15 +350,15 @@ class MyAlignmentFile:
 
     def fetch(
         self,
-        contig: Optional[str] = None,
-        start: Optional[int] = None,
-        stop: Optional[int] = None,
-        region: Optional[str] = None,
-        tid: Optional[int] = None,
+        contig: str | None = None,
+        start: int | None = None,
+        stop: int | None = None,
+        region: str | None = None,
+        tid: int | None = None,
         until_eof: bool = False,
         multiple_iterators: bool = False,
-        reference: Optional[str] = None,
-        end: Optional[int] = None,
+        reference: str | None = None,
+        end: int | None = None,
     ) -> Iterator:
         return self._alignment.fetch(
             contig=contig,
@@ -376,16 +380,16 @@ class MyAlignmentFile:
 
     def pileup(
         self,
-        contig: Optional[str] = None,
-        start: Optional[int] = None,
-        stop: Optional[int] = None,
-        region: Optional[str] = None,
-        reference: Optional[str] = None,
-        end: Optional[int] = None,
+        contig: str | None = None,
+        start: int | None = None,
+        stop: int | None = None,
+        region: str | None = None,
+        reference: str | None = None,
+        end: int | None = None,
         truncate: bool = False,
         max_depth: int = 8000,
         stepper: str = "all",
-        fastafile: Optional[pysam.FastaFile] = None,
+        fastafile: pysam.FastaFile | None = None,
         ignore_overlaps: bool = True,
         flag_filter: int = 1536,
         flag_require: int = 0,
@@ -420,14 +424,14 @@ class MyAlignmentFile:
 
     def count(
         self,
-        contig: Optional[str] = None,
-        start: Optional[int] = None,
-        stop: Optional[int] = None,
-        region: Optional[str] = None,
+        contig: str | None = None,
+        start: int | None = None,
+        stop: int | None = None,
+        region: str | None = None,
         until_eof: bool = False,
-        read_callback: Union[str, Callable[[pysam.AlignedSegment], bool]] = "all",
-        reference: Optional[str] = None,
-        end: Optional[int] = None,
+        read_callback: str | Callable[[pysam.AlignedSegment], bool] = "all",
+        reference: str | None = None,
+        end: int | None = None,
     ) -> int:
         return self._alignment.count(
             contig=contig,
@@ -442,15 +446,15 @@ class MyAlignmentFile:
 
     def count_coverage(
         self,
-        contig: Optional[str] = None,
-        start: Optional[int] = None,
-        stop: Optional[int] = None,
-        region: Optional[str] = None,
+        contig: str | None = None,
+        start: int | None = None,
+        stop: int | None = None,
+        region: str | None = None,
         quality_threshold: int = 15,
-        read_callback: Union[str, Callable[[pysam.AlignedSegment], bool]] = "all",
-        reference: Optional[str] = None,
-        end: Optional[int] = None,
-    ) -> Tuple[array.array, array.array, array.array, array.array]:
+        read_callback: str | Callable[[pysam.AlignedSegment], bool] = "all",
+        reference: str | None = None,
+        end: int | None = None,
+    ) -> tuple[array.array, array.array, array.array, array.array]:
         return self._alignment.count_coverage(
             contig=contig,
             start=start,
@@ -464,12 +468,12 @@ class MyAlignmentFile:
 
     def find_introns_slow(
         self, read_iterator: Iterable[pysam.AlignedSegment]
-    ) -> Dict[Tuple[int, int], int]:
+    ) -> dict[tuple[int, int], int]:
         return self._alignment.find_introns_slow(read_iterator)
 
     def find_introns(
         self, read_iterator: Iterable[pysam.AlignedSegment]
-    ) -> Dict[Tuple[int, int], int]:
+    ) -> dict[tuple[int, int], int]:
         return self._alignment.find_introns(read_iterator)
 
     def close(self) -> None:
@@ -502,7 +506,7 @@ class MyAlignmentFile:
     def get_reference_length(self, reference: str) -> int:
         return self._alignment.get_reference_length(reference)
 
-    def get_index_statistics(self) -> List:
+    def get_index_statistics(self) -> list:
         return self._alignment.get_index_statistics()
 
     def Watson_Crick_coverage(
@@ -537,12 +541,8 @@ class MyAlignmentFile:
             return Coverage(watson=np.array(cov_watson), crick=np.array(cov_crick))
 
 
-def myOpenFile(file: str):
-    if file == '':
-        return None
-    if file == '-':
-        outfile = sys.stdout
-    elif file.endswith('.gz'):
+def myOpenFile(file: Path):
+    if file.name.endswith('.gz'):
         outfile = gzip.open(file, 'wt')
     else:
         outfile = io.open(file, 'wt')
@@ -550,15 +550,19 @@ def myOpenFile(file: str):
 
 
 def process_interval(interval: GenomicInterval,
-                     fa_file: str,
-                     bam_file: str,
-                     params: Parameters) -> Optional[List[Tuple[str, str, int,
-                                                                str, str, float,
-                                                                int, int, int,
-                                                                int, int, int,
-                                                                int, int, int,
-                                                                int]]]:
-    with MyFastaFile(fa_file) as fa, MyAlignmentFile(bam_file, 'rb') as bam:
+                     fa_file: Path,
+                     bam_file: Path,
+                     params: Parameters) -> dict[str, str]:
+    with (MyFastaFile(fa_file) as fa,
+          MyAlignmentFile(filename=bam_file, reference_filename=fa_file, mode='rb') as bam,
+          tempfile.NamedTemporaryFile(mode='w+', suffix='.actg',
+                                      dir=params.tmp_dir, delete=False) as tmp_atcg,
+          tempfile.NamedTemporaryFile(mode='w+', suffix='.cg',
+                                      dir=params.tmp_dir, delete=False) as tmp_cg,
+          tempfile.NamedTemporaryFile(mode='w+', suffix='.bed',
+                                      dir=params.tmp_dir, delete=False) as tmp_bed):
+        tmp_paths: dict[str, str] = {
+            'atcg': tmp_atcg.name, 'cg': tmp_cg.name, 'bed': tmp_bed.name}
         # context size
         con_size = params.context_size
         # ref sequences
@@ -571,73 +575,72 @@ def process_interval(interval: GenomicInterval,
         except KeyError:
             return None
 
-        results = []
-        # (chr,
-        #  base,
-        #  start,
-        #  gc_context,
-        #  dinucleotide,
-        #  beta,
-        #  depth,
-        #  m_count,
-        #  A_waston,
-        #  T_watson,
-        #  C_watson,
-        #  G_watson,
-        #  A_crick,
-        #  T_crick,
-        #  C_crick,
-        #  G_crick)
+        # chr, base, start, gc_context, dinucleotide, beta,
+        # depth, m_count, A_waston, T_watson, C_watson, G_watson,
+        # A_crick, T_crick, C_crick, G_crick)
 
         for i in range(interval.end - interval.start):
             if cov_sum_W[i] + cov_sum_C[i] == 0:
                 continue
-
             j = i + 2
+            if j >= len(bases):
+                continue
             base = bases[j]
+            if base not in {'C', 'G'}:
+                continue
+            nCT = coverage.watson[1, i] + coverage.watson[3, i]
+            nGA = coverage.crick[2, i] + coverage.crick[0, i]
+            
+            if (base == 'C' and nCT == 0) or (base == 'G' and nGA == 0):
+                continue
+
+            chr = interval.chr
+            base = base
+            pos = interval.start + i + params.coordinate_base
+
+            A_watson = coverage.watson[0, i]
+            T_watson = coverage.watson[3, i]
+            C_watson = coverage.watson[1, i]
+            G_watson = coverage.watson[2, i]
+            A_crick = coverage.crick[0, i]
+            T_crick = coverage.crick[3, i]
+            C_crick = coverage.crick[1, i]
+            G_crick = coverage.crick[2, i]
             if base == 'C':
-                nCT = coverage.watson[1, i] + coverage.watson[3, i]
-                if nCT > 0:
-                    # CG/CHG/CHH
-                    bases_con = bases[j: (j + con_size)]
-                    results.append((interval.chr,
-                                    base,
-                                    interval.start + i + params.coordinate_base,
-                                    '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con],
-                                    bases[j: (j + 2)],
-                                    coverage.watson[1, i] / nCT,
-                                    coverage.watson[1, i],
-                                    nCT,
-                                    coverage.watson[0, i], coverage.watson[3, i],
-                                    coverage.watson[1, i], coverage.watson[2, i],
-                                    coverage.crick[0, i], coverage.crick[3, i],
-                                    coverage.crick[1, i], coverage.crick[2, i]))
+                # CG/CHG/CHH
+                bases_con = bases[j: (j + con_size)]
+                gc_context = '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con]
+                dinucleotide = bases[j: (j + 2)]
+                beta = coverage.watson[1, i] / nCT
+                depth = coverage.watson[1, i]
+                m_count = nCT
 
-            elif base == 'G':
-                nGA = coverage.crick[2, i] + coverage.crick[0, i]
-                if nGA > 0:
-                    bases_con = bases[(j - con_size + 1): (j + 1)]
-                    CG_context = ('--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con])
-                    bases2 = bases[(j - 1): (j + 1)]
-                    results.append((interval.chr,
-                                    base,
-                                    interval.start + i + params.coordinate_base,
-                                    CG_context,
-                                    '--' if 'N' in bases2 else DI_CONTEXT_REVERSE_HASH[bases2],
-                                    coverage.crick[2, i] / nGA,
-                                    coverage.crick[2, i],
-                                    nGA,
-                                    coverage.watson[0, i], coverage.watson[3, i],
-                                    coverage.watson[1, i], coverage.watson[2, i],
-                                    coverage.crick[0, i], coverage.crick[3, i],
-                                    coverage.crick[1, i], coverage.crick[2, i]))
             else:
-                pass
+                bases_con = bases[(j - con_size + 1): (j + 1)]
+                bases2 = bases[(j - 1): (j + 1)]
+                gc_context = '--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con]
+                dinucleotide = '--' if 'N' in bases2 else DI_CONTEXT_REVERSE_HASH[bases2]
+                beta = coverage.crick[2, i] / nGA
+                depth = coverage.crick[2, i]
+                m_count = nGA
 
-        return results
+            tmp_cg.write(f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
+            if gc_context == 'CG':
+                tmp_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
+            tmp_atcg.write(
+                f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t'
+                f'{beta}\t{m_count}\t{depth}\t'
+                f'{A_watson}\t{A_crick}\t{T_watson}\t{T_crick}\t'
+                f'{C_watson}\t{C_crick}\t{G_watson}\t{G_crick}\n')
+    return tmp_paths
 
 
-def methylExtractor(params: Parameters) -> None:
+def methylextractor(params: Parameters) -> None:
+    Path(params.tmp_dir).mkdir(parents=True, exist_ok=True)
+    Path(params.out_atcg).parent.mkdir(parents=True, exist_ok=True)
+    Path(params.out_cg).parent.mkdir(parents=True, exist_ok=True)
+    Path(params.out_bed).parent.mkdir(parents=True, exist_ok=True)
+
     outfile_atcg = myOpenFile(params.out_atcg)
     outfile_cg = myOpenFile(params.out_cg)
     outfile_bed = myOpenFile(params.out_bed)
@@ -649,57 +652,36 @@ def methylExtractor(params: Parameters) -> None:
                        'A_watson\tA_crick\tT_watson\tT_crick\t'
                        'C_watson\tC_crick\tG_watson\tG_crick\n')
 
-    intervals = list(
-        GenomicIntervalGenerator(
-            MyFastaFile(params.fa_file),
-            chrs=params.chr,
-            start=params.start,
-            end=params.end,
-            step=params.step
-        )
+    intervals = GenomicIntervalGenerator(
+        MyFastaFile(params.fa_file),
+        chrs=params.chr,
+        start=params.start,
+        end=params.end,
+        step=params.step
     )
 
     with ProcessPoolExecutor(max_workers=params.threads) as executor:
-        futures: List[Future] = [executor.submit(process_interval,
-                                                 interval,
-                                                 params.fa_file,
-                                                 params.bam_file,
-                                                 params)
-                                 for interval in intervals]
-        for future in as_completed(futures):
-            if future.result():
-                results: List[Tuple[str, str, int,
-                                    str, str, float,
-                                    int, int, int,
-                                    int, int, int,
-                                    int, int, int,
-                                    int]] = [i for i in future.result() if i]
-                for result in [i for i in results if i]:
-                    (chr, base, pos,
-                     gc_context, dinucleotide,
-                     beta, depth, m_count,
-                     A_watson, T_watson,
-                     C_watson, G_watson,
-                     A_crick, T_crick,
-                     C_crick, G_crick) = result
-                    if outfile_cg and depth > 0:
-                        outfile_cg.write(
-                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
-                    if outfile_bed and depth > 0 and gc_context == 'CG':
-                        outfile_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
-                    if outfile_atcg:
-                        outfile_atcg.write(
-                            f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t'
-                            f'{beta}\t{m_count}\t{depth}\t'
-                            f'{A_watson}\t{A_crick}\t{T_watson}\t{T_crick}\t'
-                            f'{C_watson}\t{C_crick}\t{G_watson}\t{G_crick}\n')
+        futures: list[Future[dict[str, str]]] = [
+            executor.submit(process_interval, interval,
+                            params.fa_file, params.bam_file, params)
+            for interval in intervals]
 
-    if (outfile_atcg is not None) and (outfile_atcg != '-'):
-        outfile_atcg.close()
-    if (outfile_cg is not None) and (outfile_cg != '-'):
-        outfile_cg.close()
-    if (outfile_bed is not None) and (outfile_bed != '-'):
-        outfile_bed.close()
+        tmp_path_lists: list[dict[str, str]] = [future.result() for future in as_completed(futures)]
+
+    for tmp_files in tmp_path_lists:
+        with open(tmp_files['atcg'], 'r') as f:
+            shutil.copyfileobj(f, outfile_atcg)
+        with open(tmp_files['cg'], 'r') as f:
+            shutil.copyfileobj(f, outfile_cg)
+        with open(tmp_files['bed'], 'r') as f:
+            shutil.copyfileobj(f, outfile_bed)
+
+        for f in tmp_files.values():
+            Path(f).unlink(missing_ok=True)
+
+    outfile_atcg.close()
+    outfile_cg.close()
+    outfile_bed.close()
 
 
 if __name__ == '__main__':
@@ -708,107 +690,37 @@ if __name__ == '__main__':
     desc = 'Extract ATCG (ATCGmap) and CG (CGmap/bedgraph) profiles from bam file'
 
     parser = ArgumentParser(description=desc)
-    parser.add_argument(
-        '-b',
-        '--bam-file',
-        dest='in_bam',
-        help='an input .bam file',
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        '-g',
-        '--reference-genome',
-        dest='in_fa',
-        help='genome reference .fa file with index (.fai) in the same path',
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        '--output-atcgmap',
-        dest='out_atcg',
-        help='output of ATCGmap file',
-        type=str,
-        required=False,
-        default='',
-    )
-    parser.add_argument(
-        '--output-cgmap',
-        dest='out_cg',
-        help='output of CGmap file',
-        type=str,
-        required=False,
-        default='',
-    )
-    parser.add_argument(
-        '--output-bed',
-        dest='out_bed',
-        help='output of bedgraph file',
-        type=str,
-        required=False,
-        default='',
-    )
-    parser.add_argument(
-        '--chr', dest='chr', help='chromosomes/contigs', type=str, default='all'
-    )
-    parser.add_argument(
-        '--start',
-        dest='start',
-        help='start coordinate of chromosomes/contigs',
-        type=int,
-        default=0,
-    )
-    parser.add_argument(
-        '--end',
-        dest='end',
-        help='end coordinate of chromosomes/contigs',
-        type=int,
-        default=math.inf,
-    )
-    parser.add_argument(
-        '--batch-size',
-        dest='step',
-        help='batch size of genomic intervals',
-        type=int,
-        default=2_000_000,
-    )
-
-    parser.add_argument(
-        '--swap-strand',
-        dest='swap_strand',
-        help='swap read counts on two strands, true/false, or yes/no',
-        type=as_bool,
-        required=False,
-        default='no',
-    )
-    parser.add_argument(
-        '--base-quality',
-        dest='base_quality',
-        help='base sequencing quality threshold',
-        type=int,
-        default=0,
-    )
-    parser.add_argument(
-        '--read-quality',
-        dest='read_quality',
-        help='read mapping quality threshold',
-        type=int,
-        default=0,
-    )
-    parser.add_argument(
-        '--coordinate-base',
-        dest='coordinate_base',
-        help='0/1-based coordinate of output',
-        type=int,
-        default=1,
-    )
-    parser.add_argument(
-        '--threads',
-        dest='threads',
-        help='parallel',
-        type=int,
-        default=1,
-    )
+    parser.add_argument('-b', '--bam-file', dest='in_bam',
+                        type=str, required=True, help='an input .bam file')
+    parser.add_argument('-g', '--reference-genome', dest='in_fa',
+                        type=str, required=True,
+                        help='genome reference .fa file with index (.fai) in the same path',)
+    parser.add_argument('--output-atcgmap', dest='out_atcg', type=str,
+                        required=True, help='output of ATCGmap file')
+    parser.add_argument('--output-cgmap', dest='out_cg', type=str, required=True,
+                        help='output of CGmap file')
+    parser.add_argument('--output-bed', dest='out_bed', type=str, default='',
+                        required=True, help='output of bedgraph file')
+    parser.add_argument('--tmp-dir', dest='tmp_dir', type=str, default='',
+                        help='temporary directory for intermediate files, default is current directory')
+    parser.add_argument('--chr', dest='chr', type=str, default='all',
+                        help='chromosomes/contigs')
+    parser.add_argument('--start', dest='start', type=int, default=0,
+                        help='start coordinate of chromosomes/contigs')
+    parser.add_argument('--end', dest='end', type=int, default=math.inf,
+                        help='end coordinate of chromosomes/contigs')
+    parser.add_argument('--batch-size', dest='step', type=int, default=2000000,
+                        help='batch size of genomic intervals')
+    parser.add_argument('--swap-strand', dest='swap_strand', action='store_true',
+                        help='swap read counts on two strands, true/false, or yes/no')
+    parser.add_argument('--base-quality', dest='base_quality', type=int, default=0,
+                        help='base sequencing quality threshold')
+    parser.add_argument('--read-quality', dest='read_quality', type=int, default=0,
+                        help='read mapping quality threshold')
+    parser.add_argument('--coordinate-base', dest='coordinate_base', type=int, default=1,
+                        help='0/1-based coordinate of output')
+    parser.add_argument('--threads', dest='threads', type=int, default=1,
+                        help='number of threads to use')
 
     options = parser.parse_args()
 
@@ -818,11 +730,12 @@ if __name__ == '__main__':
     ), 'can only set one output to stdout at most'
 
     params = Parameters(
-        fa_file=options.in_fa,
-        bam_file=options.in_bam,
-        out_atcg=options.out_atcg,  # three types of outputs
-        out_cg=options.out_cg,
-        out_bed=options.out_bed,
+        fa_file=Path(options.in_fa),
+        bam_file=Path(options.in_bam),
+        out_atcg=Path(options.out_atcg),  # three types of outputs
+        out_cg=Path(options.out_cg),
+        out_bed=Path(options.out_bed),
+        tmp_dir=Path(options.tmp_dir),
         chr=options.chr,  # 'all' for all chrs
         start=options.start,
         end=options.end,
@@ -835,4 +748,4 @@ if __name__ == '__main__':
         swap_strand=options.swap_strand,  # swap counts of two strands
         threads=options.threads
     )
-    methylExtractor(params)
+    methylextractor(params)
