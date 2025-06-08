@@ -4,6 +4,14 @@
 > This is a customized version of bs-genova with parallelization features.
 > The original bs-genova can be found [here](https://github.com/hippo-yf/bsgenova)
 
+This version of bs-genova **will benefits a lot from multiple cores**, but **not from the batch size**, as which will only reduce the number of generated tmp files, and will costs much more RAM.
+
+ For a ~30x WGBS library, given 8 cores:
+ + 2000000bp cost less than 1.44GB RAM, generated and merged about 1561 tmp files, after 8.43 hours.
+ + 20000000bp cost about 10GB RAM, generated and merged about 170 files, after 8.34 hours.
+
+Below is the original README.md context:
+=============================================
  = *bs-geno-nova* = *bs-genova*
 
 An **accurate**, **robust**, and **fast** genotype caller for **bisulfite-converted** sequencing data for both single-cell and bulk samples, such (sc)WGBS, (sc)RRBS.
