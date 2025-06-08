@@ -553,7 +553,7 @@ def myOpenFile(file: Path):
 def process_interval(interval: GenomicInterval,
                      fa_file: Path,
                      bam_file: Path,
-                     params: Parameters) -> dict[str, str]:
+                     params: Parameters) -> dict[str, str] | None:
     with (MyFastaFile(fa_file) as fa,
           MyAlignmentFile(filename=bam_file, reference_filename=fa_file, mode='rb') as bam,
           tempfile.NamedTemporaryFile(mode='w+', suffix='.actg',
@@ -574,9 +574,9 @@ def process_interval(interval: GenomicInterval,
             cov_sum_W = np.sum(coverage.watson, axis=0)
             cov_sum_C = np.sum(coverage.crick, axis=0)
         except KeyError:
-            return None
+            return
 
-        # chr, base, start, gc_context, dinucleotide, beta,
+        # chr, base, start, type, dinucleotide, beta,
         # depth, m_count, A_waston, T_watson, C_watson, G_watson,
         # A_crick, T_crick, C_crick, G_crick)
 
@@ -591,7 +591,7 @@ def process_interval(interval: GenomicInterval,
                 continue
             nCT = coverage.watson[1, i] + coverage.watson[3, i]
             nGA = coverage.crick[2, i] + coverage.crick[0, i]
-            
+
             if (base == 'C' and nCT == 0) or (base == 'G' and nGA == 0):
                 continue
 
@@ -610,7 +610,7 @@ def process_interval(interval: GenomicInterval,
             if base == 'C':
                 # CG/CHG/CHH
                 bases_con = bases[j: (j + con_size)]
-                gc_context = '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con]
+                type = '--' if 'N' in bases_con else CG_CONTEXT_FORWARD_HASH[bases_con]
                 dinucleotide = bases[j: (j + 2)]
                 beta = coverage.watson[1, i] / nCT
                 depth = coverage.watson[1, i]
@@ -619,17 +619,17 @@ def process_interval(interval: GenomicInterval,
             else:
                 bases_con = bases[(j - con_size + 1): (j + 1)]
                 bases2 = bases[(j - 1): (j + 1)]
-                gc_context = '--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con]
+                type = '--' if 'N' in bases_con else CG_CONTEXT_REVERSE_HASH[bases_con]
                 dinucleotide = '--' if 'N' in bases2 else DI_CONTEXT_REVERSE_HASH[bases2]
                 beta = coverage.crick[2, i] / nGA
                 depth = coverage.crick[2, i]
                 m_count = nGA
 
-            tmp_cg.write(f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
-            if gc_context == 'CG':
+            tmp_cg.write(f'{chr}\t{base}\t{pos}\t{type}\t{dinucleotide}\t{beta}\t{m_count}\t{depth}\n')
+            if type == 'CG':
                 tmp_bed.write(f'{chr}\t{pos}\t{pos + 1}\t{beta * 100}\n')
             tmp_atcg.write(
-                f'{chr}\t{base}\t{pos}\t{gc_context}\t{dinucleotide}\t'
+                f'{chr}\t{base}\t{pos}\t{type}\t{dinucleotide}\t'
                 f'{beta}\t{m_count}\t{depth}\t'
                 f'{A_watson}\t{A_crick}\t{T_watson}\t{T_crick}\t'
                 f'{C_watson}\t{C_crick}\t{G_watson}\t{G_crick}\n')
@@ -646,9 +646,9 @@ def methylextractor(params: Parameters) -> None:
     outfile_cg = myOpenFile(params.out_cg)
     outfile_bed = myOpenFile(params.out_bed)
 
-    outfile_cg.write('chr\tbase\tpos\tgc_context\tdinucleotide\tbeta\tm_count\tdepth\n')
+    outfile_cg.write('chr\tbase\tpos\ttype\tdinucleotide\tbeta\tm_count\tdepth\n')
     outfile_bed.write('chr\tstart\tend\tbeta\n')
-    outfile_atcg.write('chr\tbase\tpos\tgc_context\tdinucleotide\t'
+    outfile_atcg.write('chr\tbase\tpos\ttype\tdinucleotide\t'
                        'beta\tm_count\tdepth\t'
                        'A_watson\tA_crick\tT_watson\tT_crick\t'
                        'C_watson\tC_crick\tG_watson\tG_crick\n')
